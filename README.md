@@ -8,6 +8,8 @@ A simple Android app that scans images using the TWAIN Direct protocol. Intended
 * Transferring image blocks.
 * Assembling blocks into a final PDF.
 
+You can scan from either a local scanner or a cloud scanner.
+
 The TWAIN Direct protocol code is in a separate module from the Android UI. It would be easy to extract and use in any Java project.
 
 ## Getting Started
@@ -18,10 +20,16 @@ Note that TWAIN Direct uses mDNS to discover scanners, and the service discovery
 There is currently minimal test coverage. You can run the tests in Android Studio.
 
 ## Built With
-* [TinyDNSSD]([http://www.dropwizard.io/1.0.2/docs/]) - mDNS library used for reading TXT records on Android.
+* [TinyDNSSD] - mDNS library used for reading TXT records on Android.
+* [Paho] - MQTT support for TWAIN Cloud
+*
+## Command Line Test App
+If you're just interested in a Java implementation of the TWAIN Direct protocol, the [twaindirect] directory contains the protocol implementation as well as a command line tool that can drive it.
+
+## TWAIN Cloud support
+This project implements both TWAIN Local and TWAIN Cloud. The TWAIN Cloud support is built specifically for the [https://twain.hazybits.com] reference implementation (source available [here]).
 
 ## License
 License TBD
-
 
 

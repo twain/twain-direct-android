@@ -1,4 +1,4 @@
-package org.twaindirect.sample;
+package org.twaindirect.sample.cloud;
 
 import android.content.Context;
 import android.support.annotation.NonNull;
@@ -9,24 +9,26 @@ import android.view.ViewGroup;
 import android.widget.ArrayAdapter;
 import android.widget.TextView;
 
+import org.twaindirect.cloud.CloudScannerInfo;
 import org.twaindirect.discovery.ScannerInfo;
+import org.twaindirect.sample.R;
 
 import java.util.List;
 
 /**
- * Adapts ScannerInfo into R.layouts.scanner_list_row, used by the scanner picker.
+ * Adapts CloudScannerInfo into R.layouts.cloud_scanner_list_row, used by the scanner picker.
  */
 
-public class ScannerInfoArrayAdapter extends ArrayAdapter<ScannerInfo> {
+public class CloudScannerInfoArrayAdapter extends ArrayAdapter<CloudScannerInfo> {
 
-    public ScannerInfoArrayAdapter(@NonNull Context context, List<ScannerInfo> scanners) {
+    public CloudScannerInfoArrayAdapter(@NonNull Context context, List<CloudScannerInfo> scanners) {
         super(context, 0, scanners);
     }
 
     @NonNull
     @Override
     public View getView(int position, @Nullable View convertView, @NonNull ViewGroup parent) {
-        ScannerInfo scannerInfo = getItem(position);
+        CloudScannerInfo scannerInfo = getItem(position);
 
         if (convertView == null) {
             convertView = LayoutInflater.from(getContext()).inflate(R.layout.scanner_list_row, parent, false);
@@ -35,15 +37,11 @@ public class ScannerInfoArrayAdapter extends ArrayAdapter<ScannerInfo> {
         TextView titleView = convertView.findViewById(R.id.title);
         TextView detailsView = convertView.findViewById(R.id.details);
 
-        titleView.setText(scannerInfo.getNote());
-
-        String details = scannerInfo.getUrl().toString() + "\n" + scannerInfo.getFqdn();
-        String note = scannerInfo.getNote();
+        titleView.setText(scannerInfo.getName());
+        String note = scannerInfo.getDescription();
         if (note != null) {
-            details = details + "\n" + note;
+            detailsView.setText(note);
         }
-
-        detailsView.setText(details);
 
         return convertView;
     }

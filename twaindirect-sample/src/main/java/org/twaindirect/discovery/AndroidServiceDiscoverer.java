@@ -7,6 +7,8 @@ import com.youview.tinydnssd.DiscoverResolver.Listener;
 import com.youview.tinydnssd.MDNSDiscover;
 
 import java.net.MalformedURLException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
@@ -51,14 +53,22 @@ public class AndroidServiceDiscoverer {
         }
 
         // Construct the URL to the scanner's TWAIN Direct endpoint
-        URL url = null;
+        URI url = null;
         try {
             if (fqdn != null && !fqdn.isEmpty()) {
-                url = new URL(protocol, fqdn, port, "/");
+                url = new URL(protocol, fqdn, port, "/").toURI();
             } else {
-                url = new URL(protocol, host, port, "/");
+                url = new URL(protocol, host, port, "/").toURI();
             }
-            return new ScannerInfo(url, host, fqdn, result.txt.dict);
+
+            String name = result.txt.dict.get("ty");
+            String note = result.txt.dict.get("note");
+
+            return new ScannerInfo(url, host, fqdn, name, note);
+        } catch (URISyntaxException e) {
+            // Ignore - invalid scanner, exclude from list
+            logger.severe(e.toString());
+            return null;
         } catch (MalformedURLException e) {
             // Ignore - invalid scanner, exclude from list
             logger.severe(e.toString());

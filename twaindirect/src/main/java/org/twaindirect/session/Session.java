@@ -3,33 +3,23 @@ package org.twaindirect.session;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.twaindirect.cloud.CloudBlockRequest;
+import org.twaindirect.cloud.CloudConnection;
+import org.twaindirect.cloud.CloudEventBroker;
 
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.MalformedURLException;
 import java.net.SocketTimeoutException;
-import java.net.URL;
-import java.nio.channels.FileChannel;
+import java.net.URI;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
-import javax.mail.BodyPart;
-import javax.mail.MessagingException;
-import javax.mail.internet.MimeBodyPart;
-import javax.mail.internet.MimeMultipart;
 
 /**
  * A TWAIN Direct client uses the Session object to scan images.
@@ -78,14 +68,15 @@ public class Session {
 
     /**
      * This is the URL for the root of the scanner host,
-     * ie, http://192.168.1.4:55555/
+     * ie, http://192.168.1.4:34034/privet/
+     * or, if cloud, the cloud API url + "/scanners/{scanner_id}"
      */
-    private URL url;
+    private URI url;
 
     /**
-     * This is provided by getinfoex, and is typically url + "/privet/twaindirect/session"
+     * This is provided by getinfoex, and is typically url + "/twaindirect/session"
      */
-    private URL endpoint;
+    private URI endpoint;
 
     /**
      * This is the IP address of the scanner - it's used to set up the mDNS name resolution.
@@ -143,19 +134,33 @@ public class Session {
     private boolean imageBlocksDrained;
     private BlockDownloader blockDownloader;
 
+    private final CloudEventBroker cloudEventBroker;
+    private final CloudConnection cloudConnection;
+
     /**
-     *
-     * @param url For example, https://myscanner.local:34034/
+     * Prepare a TWAIN Local session
+     * @param url For example, https://myscanner.local:34034
      * @param scannerIp The IP address that "myscanner.local" resolves to, for mDNS name resolution.
      */
-    public Session(URL url, String scannerIp) {
-        logger.setLevel(Level.ALL);
-        this.url = url;
+    public Session(URI url, String scannerIp) {
         this.scannerIp = scannerIp;
+        this.cloudEventBroker = null;
+        this.cloudConnection = null;
         reset();
 
-        logger.info("Session startup");
-        logger.log(Level.INFO, "Session startup 2");
+        logger.info("Local session startup");
+    }
+
+    /**
+     * Prepare for a TWAIN Cloud session
+     */
+    public Session(URI scannerUrl, CloudEventBroker cloudEventBroker, CloudConnection cloudConnection) {
+        this.url = scannerUrl;
+        this.cloudEventBroker = cloudEventBroker;
+        this.cloudConnection = cloudConnection;
+        reset();
+
+        logger.info("Cloud session startup");
     }
 
     /**
@@ -168,7 +173,14 @@ public class Session {
 
     @Override
     public String toString() {
-        String result = "state=" + state.toString() + ", revision=" + sessionRevision;
+        String result = "";
+
+        if (state != null) {
+            result = "state=" + state.toString() + ", revision=" + sessionRevision;
+        } else {
+            result = "state=null";
+        }
+
         if (privetToken != null) {
             result += "\n privetToken=" + privetToken;
         }
@@ -221,22 +233,20 @@ public class Session {
      *
      * @param listener
      */
-    void getInfoEx(AsyncResult<JSONObject> listener) {
-        try {
-            URL infoUrl = new URL(url, "/privet/infoex");
+    public void getInfoEx(AsyncResult<JSONObject> listener) {
+        URI infoUrl = URIUtils.appendPathToURI(url, "/infoex");
 
-            HttpJsonRequest request = new HttpJsonRequest();
-            request.url = infoUrl;
-            request.ipaddr = scannerIp;
-            request.listener = listener;
+        HttpJsonRequest request =  new HttpJsonRequest();
+        request.url = infoUrl;
+        request.ipaddr = scannerIp;
+        request.listener = listener;
+        request.cloudEventBroker = cloudEventBroker;
+        request.cloudConnection = cloudConnection;
 
-            // Must be included, but empty
-            request.headers.put("X-Privet-Token", "");
+        // Must be included, but empty
+        request.headers.put("X-Privet-Token", "");
 
-            executor.submit(request);
-        } catch (MalformedURLException e) {
-            listener.onError(e);
-        }
+        executor.submit(request);
     }
 
     /**
@@ -260,16 +270,17 @@ public class Session {
                     return;
                 }
                 try {
+                    logger.info("Received privet token");
                     infoExResult = result;
                     privetToken = result.getString("x-privet-token");
-                    endpoint = new URL(url, result.getJSONArray("api").getString(0));
+                    // the server gets this right based on detecting if we're
+                    // coming in on a TWAIN Local or a TWAIN Cloud connection...
+                    String apiPath = result.getJSONArray("api").getString(0);
+                    endpoint = URIUtils.appendPathToURI(url, apiPath);
 
                     // try again now that we have the privet token
                     open(listener);
                 } catch (JSONException e) {
-                    listener.onError(e);
-                    return;
-                } catch (MalformedURLException e) {
                     listener.onError(e);
                     return;
                 }
@@ -284,21 +295,27 @@ public class Session {
 
         if (privetToken == null) {
             // Chain through getting the privetToken
+            logger.info("Requesting privet token");
             getInfoEx(privetTokenListener);
         } else {
             try {
                 // Create and send the createSession request
+                logger.info("Sending createSession");
+                String commandId = UUID.randomUUID().toString();
                 JSONObject body = new JSONObject();
                 body.put("kind", "twainlocalscanner");
                 body.put("method", "createSession");
-                body.put("commandId", UUID.randomUUID().toString());
+                body.put("commandId", commandId);
 
                 HttpJsonRequest request = new HttpJsonRequest();
                 request.url = endpoint;
                 request.method = "POST";
+                request.commandId = commandId;
                 request.requestBody = body;
                 request.headers.put("X-Privet-Token", privetToken);
                 request.ipaddr = scannerIp;
+                request.cloudConnection = cloudConnection;
+                request.cloudEventBroker = cloudEventBroker;
 
                 request.listener = new AsyncResult<JSONObject>() {
                     @Override
@@ -311,11 +328,14 @@ public class Session {
                                 return;
                             }
 
+                            logger.fine("Created session");
+
                             updateSession(results.getJSONObject("session"));
 
                             if (state != State.ready) {
                                 String message = String.format("createSession expected state readyToDownload, got %s", state);
                                 listener.onError(new SessionException(message));
+                                return;
                             }
 
                             startEventListener();
@@ -505,7 +525,7 @@ public class Session {
             return;
         }
 
-        blockDownloader = new BlockDownloader(this, tempDir, sessionListener);
+        blockDownloader = new BlockDownloader(this, tempDir, sessionListener, cloudEventBroker);
 
         files.clear();
 
@@ -604,7 +624,7 @@ public class Session {
 
             @Override
             public void onError(Exception e) {
-                if (e instanceof SocketTimeoutException) {
+                if (e instanceof SocketTimeoutException || e instanceof TimeoutException) {
                     // This is expected to fail, timeout, etc., and our
                     // response is to retry.  Don't up the retry count.
                 } else {
@@ -701,13 +721,14 @@ public class Session {
      * @param params
      * @return
      */
-    private HttpJsonRequest createJsonRequest(String method, JSONObject params) {
+    HttpJsonRequest createJsonRequest(String method, JSONObject params) {
         // Create and send the createSession request
+        String commandId = UUID.randomUUID().toString();
         JSONObject body = new JSONObject();
         try {
             body.put("kind", "twainlocalscanner");
             body.put("method", method);
-            body.put("commandId", UUID.randomUUID().toString());
+            body.put("commandId", commandId);
             if (params != null) {
                 body.put("params", params);
             }
@@ -717,7 +738,10 @@ public class Session {
         }
 
         HttpJsonRequest request = new HttpJsonRequest();
+        request.cloudConnection = cloudConnection;
+        request.cloudEventBroker = cloudEventBroker;
         request.url = endpoint;
+        request.commandId = commandId;
         request.ipaddr = scannerIp;
         request.method = "POST";
         request.requestBody = body;
@@ -733,10 +757,11 @@ public class Session {
     HttpBlockRequest createBlockRequest(JSONObject params) {
         // Create and send the createSession request
         JSONObject body = new JSONObject();
+        String commandId = UUID.randomUUID().toString();
         try {
             body.put("kind", "twainlocalscanner");
             body.put("method", "readImageBlock");
-            body.put("commandId", UUID.randomUUID().toString());
+            body.put("commandId", commandId);
             if (params != null) {
                 body.put("params", params);
             }
@@ -747,8 +772,22 @@ public class Session {
 
         HttpBlockRequest request = new HttpBlockRequest();
         request.url = endpoint;
+        request.commandId = commandId;
         request.ipaddr = scannerIp;
         request.requestBody = body;
+        request.headers.put("X-Privet-Token", privetToken);
+        return request;
+    }
+
+    /**
+     * Helper to create a configured CloudBlockRequest (for BlockDownloader)
+     * @blockUrl block ID returned in the readImageBlock response when using a cloud source
+     * @return
+     */
+    public CloudBlockRequest createCloudBlockRequest(String blockUrl) {
+        // Create and send the createSession request
+        CloudBlockRequest request = new CloudBlockRequest(cloudConnection);
+        request.url = URIUtils.pathToURI(blockUrl);
         request.headers.put("X-Privet-Token", privetToken);
         return request;
     }
@@ -873,8 +912,8 @@ public class Session {
         Runnable listener = new Runnable() {
             @Override
             public void run() {
+                logger.info("Starting event listener");
                 while (!stopping) {
-                    logger.info("Starting event listener");
                     try {
                         if (!syncListen()) {
                             break;

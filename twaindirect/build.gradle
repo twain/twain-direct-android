@@ -1,12 +1,14 @@
 apply plugin: 'java'
 
 dependencies {
-    compile fileTree(include: ['*.jar'], dir: 'libs')
-    compile 'com.sun.mail:android-mail:1.5.5'
-    compile 'com.sun.mail:android-activation:1.5.5'
-    compile 'org.apache.httpcomponents:httpclient:4.3.5'
-    compile 'org.apache.httpcomponents:httpclient-android:4.3.5.1'
-    compile 'org.json:json:20170516'
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation 'com.sun.mail:android-mail:1.5.5'
+    implementation 'com.sun.mail:android-activation:1.5.5'
+    implementation 'org.apache.httpcomponents:httpclient:4.3.5'
+    implementation 'org.apache.httpcomponents:httpclient-android:4.3.5.1'
+    implementation 'org.json:json:20170516'
+
+    implementation 'org.eclipse.paho:org.eclipse.paho.client.mqttv3:1.2.0'
 }
 
 buildscript {

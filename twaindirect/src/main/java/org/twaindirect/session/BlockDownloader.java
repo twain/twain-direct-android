@@ -2,7 +2,11 @@ package org.twaindirect.session;
 
 import org.json.JSONException;
 import org.json.JSONObject;
+import org.twaindirect.cloud.CloudBlockRequest;
+import org.twaindirect.cloud.CloudConnection;
+import org.twaindirect.cloud.CloudEventBroker;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -15,6 +19,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -46,6 +52,10 @@ public class BlockDownloader {
 
     // The client application's listener
     private final SessionListener sessionListener;
+
+    private final CloudEventBroker cloudEventBroker;
+
+    private ExecutorService executor = Executors.newFixedThreadPool(1);
 
     /**
      * Status of all the blocks we're aware of
@@ -90,10 +100,11 @@ public class BlockDownloader {
         completed
     }
 
-    public BlockDownloader(Session session, File tempDir, SessionListener sessionListener) {
+    public BlockDownloader(Session session, File tempDir, SessionListener sessionListener, CloudEventBroker cloudEventBroker) {
         this.session = session;
         this.tempDir = tempDir;
         this.sessionListener = sessionListener;
+        this.cloudEventBroker = cloudEventBroker;
     }
 
     /**
@@ -192,9 +203,7 @@ public class BlockDownloader {
             params.put("imageBlockNum", blockReady);
             params.put("withMetadata", "true");
 
-            HttpBlockRequest request = session.createBlockRequest(params);
-
-            request.listener = new AsyncResult<InputStream>() {
+            final AsyncResult<InputStream> localListener = new AsyncResult<InputStream>() {
                 @Override
                 public void onResult(InputStream inputStream) {
                     try {
@@ -207,9 +216,9 @@ public class BlockDownloader {
 
                         int count = multipart.getCount();
 
-                        JSONObject metadata = null;
                         MimeBodyPart contentPart = null;
 
+                        JSONObject results = null;
                         for (int part = 0; part < count; part++) {
                             BodyPart bodyPart = multipart.getBodyPart(part);
 
@@ -217,8 +226,7 @@ public class BlockDownloader {
                                 Object partObj = bodyPart.getContent();
                                 if (partObj instanceof InputStream) {
                                     JSONObject response = StreamUtils.inputStreamToJSONObject((InputStream)partObj);
-                                    JSONObject results = response.getJSONObject("results");
-                                    metadata = results.getJSONObject("metadata");
+                                    results = response.getJSONObject("results");
                                 }
                             }
 
@@ -233,15 +241,8 @@ public class BlockDownloader {
                         }
 
                         // Save the content part, using an intermediate filename geneated from the metadata
-                        JSONObject address = metadata.getJSONObject("address");
-
-                        ImageBlockInfo imageBlockInfo = new ImageBlockInfo();
-                        imageBlockInfo.metadata = metadata;
-                        imageBlockInfo.blockNum = blockNum;
-                        imageBlockInfo.sheetNumber = address.getInt("sheetNumber");
-                        imageBlockInfo.imageNumber = address.getInt("imageNumber");
-                        imageBlockInfo.imagePart = address.getInt("imagePart");
-                        imageBlockInfo.moreParts = ImageBlockInfo.MoreParts.valueOf(address.getString("moreParts"));
+                        JSONObject metadata = results.getJSONObject("metadata");
+                        ImageBlockInfo imageBlockInfo = createImageBlockInfo(metadata, blockNum);
 
                         // Save the content part to disk
                         String partName = imageBlockInfo.partFileName();
@@ -257,46 +258,138 @@ public class BlockDownloader {
                         chan.truncate(bodyLength);
                         chan.close();
 
-                        // Add the ImageBlockInfo to our map of lists of parts.
-                        String imageName = null;
-                        synchronized(this) {
-                            blockState.put(blockNum, BlockState.waitingForMoreParts);
-                            imageName = imageBlockInfo.eventualFileName();
-                            downloadedBlocks.put(blockNum, imageBlockInfo);
-                        }
-
-                        logger.fine(String.format("Finished downloading block %d", blockNum));
-
-                        deliverCompletedParts();
-
-                        // On to the next part
-                        startDownloadThread();
-
-                        session.releaseBlock(blockNum, blockNum);
+                        completedImageBlockDownload(imageBlockInfo);
                     } catch (MessagingException e) {
                         // The MIME body was unusable
-                        logger.severe(e.toString());
+                        sessionListener.onConnectionError(session, e);
                     } catch (IOException e) {
-                        logger.severe(e.toString());
+                        sessionListener.onConnectionError(session, e);
                     } catch (JSONException e) {
-                        logger.severe(e.toString());
+                        sessionListener.onConnectionError(session, e);
                     }
                 }
 
                 @Override
                 public void onError(Exception e) {
                     // We failed getting this piece
-                    activeDownloadCount = activeDownloadCount - 1;
+                    synchronized(this) {
+                        activeDownloadCount = activeDownloadCount - 1;
+                    }
                     sessionListener.onConnectionError(session, e);
                 }
             };
 
-            request.run();
+            // The regular image block request (readImageBlock) will return JSON
+            // in this case, containing the blockId
+            AsyncResult<JSONObject> cloudListener = new AsyncResult<JSONObject>() {
+                @Override
+                public void onResult(JSONObject result) {
+                    final JSONObject results = result.getJSONObject("results");
+                    final String blockId = results.getString("imageBlockUrl");
+                    logger.info("Requesting download of imageBlockId " + blockId);
+
+                    // We have the metadata. Request the block data from the cloud.
+                    CloudBlockRequest cloudBlockRequest = session.createCloudBlockRequest(blockId);
+                    cloudBlockRequest.listener = new AsyncResult<InputStream>() {
+                        @Override
+                        public void onResult(InputStream imageStream) {
+                            logger.info("Received data for block num " + blockNum + " id " + blockId);
+                            synchronized(this) {
+                                activeDownloadCount = activeDownloadCount - 1;
+                            }
+
+                            JSONObject metadata = results.getJSONObject("metadata");
+                            ImageBlockInfo imageBlockInfo = createImageBlockInfo(metadata, blockNum);
+                            String partName = imageBlockInfo.partFileName();
+                            File tempFile = new File(tempDir, partName);
+                            try {
+                                // The source stream is raw binary data
+                                ByteArrayOutputStream bufferStream = new ByteArrayOutputStream();
+                                byte[] buffer = new byte[64*1024];
+                                int len = 0;
+                                while ((len = imageStream.read(buffer)) != -1) {
+                                    bufferStream.write(buffer, 0, len);
+                                }
+
+                                FileOutputStream outputStream = new FileOutputStream(tempFile);
+                                outputStream.write(bufferStream.toByteArray());
+                                outputStream.close();
+
+                                completedImageBlockDownload(imageBlockInfo);
+                            } catch (IOException e) {
+                                sessionListener.onConnectionError(session, e);
+                            }
+                        }
+
+                        @Override
+                        public void onError(Exception e) {
+                            synchronized(this) {
+                                activeDownloadCount = activeDownloadCount - 1;
+                            }
+                            sessionListener.onConnectionError(session, e);
+                        }
+                    };
+                    cloudBlockRequest.run();
+                }
+
+                @Override
+                public void onError(Exception e) {
+                    synchronized(this) {
+                        activeDownloadCount = activeDownloadCount - 1;
+                    }
+                    sessionListener.onConnectionError(session, e);
+                }
+            };
+
+            // Use either HttpBlockRequest or cloudListener depending on which
+            // protocol we're using
+            if (cloudEventBroker != null) {
+                HttpJsonRequest request = session.createJsonRequest("readImageBlock", params);
+                request.readTimeout = 120000;
+                request.listener = cloudListener;
+                executor.submit(request);
+            } else {
+                // Local block request
+                HttpBlockRequest request = session.createBlockRequest(params);
+                request.listener = localListener;
+                request.run();
+            }
+
         } catch (Exception e) {
             logger.severe(e.toString());
         }
     }
 
+    private ImageBlockInfo createImageBlockInfo(JSONObject metadata, int blockNum) {
+        JSONObject address = metadata.getJSONObject("address");
+
+        ImageBlockInfo imageBlockInfo = new ImageBlockInfo();
+        imageBlockInfo.metadata = metadata;
+        imageBlockInfo.blockNum = blockNum;
+        imageBlockInfo.sheetNumber = address.getInt("sheetNumber");
+        imageBlockInfo.imageNumber = address.getInt("imageNumber");
+        imageBlockInfo.imagePart = address.getInt("imagePart");
+        imageBlockInfo.moreParts = ImageBlockInfo.MoreParts.valueOf(address.getString("moreParts"));
+        return imageBlockInfo;
+    }
+
+    private void completedImageBlockDownload(ImageBlockInfo imageBlockInfo) {
+        // Add the ImageBlockInfo to our map of lists of parts.
+        synchronized(this) {
+            blockState.put(imageBlockInfo.blockNum, BlockState.waitingForMoreParts);
+            downloadedBlocks.put(imageBlockInfo.blockNum, imageBlockInfo);
+        }
+
+        logger.fine(String.format("Finished downloading block %d", imageBlockInfo.blockNum));
+
+        deliverCompletedParts();
+
+        // On to the next part
+        startDownloadThread();
+
+        session.releaseBlock(imageBlockInfo.blockNum, imageBlockInfo.blockNum);
+
+    }
     /**
      * If we have all the parts for the next image to deliver, deliver it to the application.
      */

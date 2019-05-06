@@ -32,7 +32,6 @@ public class ScannerInfoTest {
         assert(si1.equals(si2));
 
         assert(si1.getFqdn().equals(si2.getFqdn()));
-        assert(si1.getFriendlyName().equals(si2.getFqdn()));
         assert(si1.getNote() == null);
         assert(si2.getNote() == null);
         assert(si1.getUrl().equals(si2.getUrl()));

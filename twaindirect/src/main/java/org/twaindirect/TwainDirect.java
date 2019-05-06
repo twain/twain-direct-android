@@ -1,16 +1,15 @@
 package org.twaindirect;
 
 import org.json.JSONObject;
+import org.twaindirect.cloud.CloudConnection;
+import org.twaindirect.cloud.CloudSession;
 import org.twaindirect.session.AsyncResponse;
 import org.twaindirect.session.AsyncResult;
 import org.twaindirect.session.Session;
 import org.twaindirect.session.SessionListener;
 
 import java.io.File;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.Handler;
+import java.net.URI;
 import java.util.logging.Level;
 import java.util.logging.LogManager;
 import java.util.logging.Logger;
@@ -18,34 +17,72 @@ import java.util.logging.Logger;
 /**
  * TWAIN Direct Library Development Testing Class
  *
+ * Usage:
+ *      TwainDirect local http://local-scanner.local:34034
+ *      TwainDirect cloud http://my-twain-cloud.com/scanners/my-scanner-id auth-token
  *
  */
-
 public class TwainDirect {
+    CloudSession cloudSession;
     Session session;
+    String authToken;
+
     private static final Logger logger = Logger.getLogger(TwainDirect.class.getName());
 
     public static void main(String[] args) {
-        TwainDirect app = new TwainDirect();
         try {
             if (args.length == 0) {
-                System.out.println("Scanner URL not provided.");
+                System.out.println("Usage:");
+                System.out.println("TwainDirect local http://local-scanner.local:34034");
+                System.out.println("TwainDirect cloud http://my-twain-cloud.com/scanners/my-scanner-id auth-token refresh-token");
                 System.exit(1);
             }
 
-            app.run(args[0]);
+            if (args[0].equals("cloud")) {
+                // To create a session connected to a cloud scanner, we need to use
+                // CloudSession to create the session for us.
+                final TwainDirect app = new TwainDirect();
+                URI apiRoot = new URI(args[1]);
+                String scannerId = args[2];
+                String authToken = args[3];
+                String refreshToken = args[4];
+                CloudConnection cloudConnection = new CloudConnection(apiRoot, authToken, refreshToken);
+                CloudSession cloudSession = new CloudSession(apiRoot, scannerId, cloudConnection);
+                cloudSession.createSession(new AsyncResult<Session>() {
+                    @Override
+                    public void onResult(Session session) {
+                        System.out.println("Established cloud session");
+                        app.runSession(session);
+                    }
+
+                    @Override
+                    public void onError(Exception e) {
+                        System.err.println(e.getMessage());
+                    }
+                });
+            }
+
+            if (args[0].equals("local")) {
+                // Construct and run a local the session
+                TwainDirect app = new TwainDirect();
+                URI url = new URI(args[1]);
+                System.out.println("Opening session to " + url);
+                app.runSession(new Session(url, url.getHost()));
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    private void run(String urlString) throws MalformedURLException {
-        logger.info("TwainDirect Test App Startup");
+    /**
+     * Once a session is established, scanning works the same whether you're using a
+     * local or a cloud scanner.
+     * @param session The session to scan from
+     */
+    private void runSession(final Session session) {
+        logger.info("Session Started");
 
-        URL url = new URL(urlString);
-        System.out.println("Opening session to " + url);
-
-        session = new Session(url, url.getHost());
+        this.session = session;
         session.setTempDir(new File("/tmp"));
 
         session.setSessionListener(new SessionListener() {
@@ -114,7 +151,10 @@ public class TwainDirect {
 
     private void sendTask() {
         // Let's send a task
-        JSONObject task = new JSONObject("{\"actions\": [ { \"action\": \"configure\" } ] }");
+//        JSONObject task = new JSONObject("{\"actions\": [ { \"action\": \"configure\" } ] }");
+
+        // This task requests a B&W image
+        JSONObject task = new JSONObject("{\"actions\":[{\"action\":\"configure\",\"streams\":[{\"sources\":[{\"source\":\"any\",\"pixelFormats\":[{\"pixelFormat\":\"bw1\",\"attributes\":[{\"attribute\":\"compression\",\"values\":[{\"value\":\"autoVersion1\"}]},{\"attribute\":\"numberOfSheets\",\"values\":[{\"value\":1}]}]}]}]}]}]}}");
 
         session.sendTask(task, new AsyncResult<JSONObject>() {
             @Override

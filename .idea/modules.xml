@@ -2,7 +2,7 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
-      <module fileurl="file://$PROJECT_DIR$/TWAINDirectSample.iml" filepath="$PROJECT_DIR$/TWAINDirectSample.iml" />
+      <module fileurl="file://$PROJECT_DIR$/.idea/twain-direct-android.iml" filepath="$PROJECT_DIR$/.idea/twain-direct-android.iml" />
       <module fileurl="file://$PROJECT_DIR$/twaindirect/twaindirect.iml" filepath="$PROJECT_DIR$/twaindirect/twaindirect.iml" />
       <module fileurl="file://$PROJECT_DIR$/twaindirect-sample/twaindirect-sample.iml" filepath="$PROJECT_DIR$/twaindirect-sample/twaindirect-sample.iml" />
     </modules>

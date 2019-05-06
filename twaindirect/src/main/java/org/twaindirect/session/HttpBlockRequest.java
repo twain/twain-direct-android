@@ -9,9 +9,10 @@ import org.json.JSONObject;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
+import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.logging.Logger;
 
 
 /**
@@ -19,9 +20,9 @@ import java.util.Map;
  * metadata as an application/json part, and the image as an application/pdf part.
  */
 class HttpBlockRequest implements Runnable {
-    private static final String TAG = "HttpBlockRequest";
+    private static final Logger logger = Logger.getLogger(HttpBlockRequest.class.getName());
 
-    public URL url;
+    public URI url;
     public String ipaddr;
     public Map<String, String> headers = new HashMap<String, String>();
 
@@ -31,12 +32,19 @@ class HttpBlockRequest implements Runnable {
     public int readTimeout = 30000;
     public int connectTimeout = 20000;
 
+    String commandId;
+
     @Override
     public void run() {
         String result = null;
         try {
+            logger.finer("Executing Image Block request for " + url + " commandId " + commandId);
+            if (requestBody != null) {
+                logger.finest("Request body: " + requestBody.toString(2));
+            }
+
             //Create a connection
-            CloseableHttpClient httpClient =  HttpClientBuilder.createHttpClient(url.getHost(), ipaddr);
+            CloseableHttpClient httpClient = HttpClientBuilder.createHttpClient(url.getHost(), ipaddr);
             HttpPostHC4 request = new HttpPostHC4(url.toString());
 
             RequestConfig requestConfig = RequestConfig.custom().setConnectionRequestTimeout(connectTimeout).setSocketTimeout(readTimeout).build();
@@ -58,6 +66,8 @@ class HttpBlockRequest implements Runnable {
 
             // Connect to our url, get the response
             CloseableHttpResponse response = httpClient.execute(request);
+
+            // If we're local, we will have the result now
             listener.onResult(response.getEntity().getContent());
         } catch (IOException e) {
             listener.onError(e);

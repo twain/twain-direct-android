@@ -31,4 +31,14 @@
     <string name="show_images_button">Show Images</string>
     <string name="scanners">Scanners</string>
     <string name="delete_all_images">Delete All Images</string>
+    <string name="local_or_cloud">Select whether you\'d like to use a local scanner or a TWAIN Cloud scanner</string>
+    <string name="cloud">Cloud</string>
+    <string name="local">Local</string>
+    <string name="title_activity_select_cloud_scanner">Select Cloud Scanner</string>
+    <string name="login_with_google">Login with Google</string>
+    <string name="twain_cloud_api_url">TWAIN Cloud API URL</string>
+    <string name="login_with_facebook">Login with Facebook</string>
+    <string name="https_twain_hazybits_com_api">https://twain.hazybits.com/api/</string>
+    <string name="title_activity_cloud_discover">Discovered Cloud URLs</string>
+    <string name="cloud_discover">Discover Cloud URL</string>
 </resources>

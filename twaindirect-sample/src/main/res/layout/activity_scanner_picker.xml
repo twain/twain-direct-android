@@ -18,7 +18,7 @@
             android:id="@+id/toolbar"
             android:title="@string/scanners"
             android:layout_width="match_parent"
-            android:layout_height="?attr/actionBarSize"
+            android:layout_height="?android:attr/actionBarSize"
             app:layout_collapseMode="pin"
             app:popupTheme="@style/AppTheme.PopupOverlay" />
 
@@ -26,4 +26,4 @@
 
     <include layout="@layout/content_scanner_picker" />
 
-</android.support.design.widget.CoordinatorLayout>
+    </android.support.design.widget.CoordinatorLayout>
